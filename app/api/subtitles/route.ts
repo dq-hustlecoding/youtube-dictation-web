@@ -48,15 +48,15 @@ export async function GET(request: NextRequest) {
 
     console.log("Subtitle file content length:", subContent.length);
 
-    // Parse VTT format
+    // Parse VTT format - collect all text lines between timestamps
     const lines = subContent.split('\n');
-    const subtitles = [];
-    let index = 0;
+    const rawSubtitles = [];
+    let i = 0;
 
-    for (let i = 0; i < lines.length; i++) {
+    while (i < lines.length) {
       const line = lines[i].trim();
 
-      // Match timestamp line: 00:00:00.000 --> 00:00:03.000 (with optional attributes)
+      // Match timestamp line: 00:00:00.000 --> 00:00:03.000
       const timestampMatch = line.match(/^(\d{2}):(\d{2}):(\d{2})\.(\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2})\.(\d{3})/);
 
       if (timestampMatch) {
@@ -73,30 +73,121 @@ export async function GET(request: NextRequest) {
         const start = startHours * 3600 + startMinutes * 60 + startSeconds + startMs / 1000;
         const end = endHours * 3600 + endMinutes * 60 + endSeconds + endMs / 1000;
 
-        // Next non-empty line contains the text
-        let j = i + 1;
-        while (j < lines.length && !lines[j].trim()) {
-          j++; // Skip empty lines
-        }
+        // Collect text lines until we hit an empty line or next timestamp
+        const textLines = [];
+        i++;
 
-        if (j < lines.length) {
-          const textLine = lines[j].trim();
-          // Remove timing tags like <00:00:00.399> and keep only the text
-          const text = textLine.replace(/<\d{2}:\d{2}:\d{2}\.\d{3}>/g, '').replace(/<[^>]*>/g, '').trim();
+        while (i < lines.length) {
+          const textLine = lines[i].trim();
 
-          if (text) {
-            subtitles.push({
-              text,
-              start,
-              duration: end - start,
-              index: index++
-            });
+          // Stop if empty line or next timestamp
+          if (!textLine || /^\d{2}:\d{2}:\d{2}\.\d{3}\s*-->/.test(textLine)) {
+            break;
           }
+
+          // Skip cue identifiers (numbers or UUIDs)
+          if (!textLine.match(/^\d+$/) && !textLine.match(/^[a-f0-9-]{36}$/i)) {
+            textLines.push(textLine);
+          }
+
+          i++;
         }
 
-        i = j;
+        // For karaoke-style subtitles, prefer lines with timing tags
+        let selectedLine = '';
+        const karaokeLines = textLines.filter(line => line.includes('<') && /\d{2}:\d{2}:\d{2}\.\d{3}/.test(line));
+
+        if (karaokeLines.length > 0) {
+          // Use the last karaoke line (most complete)
+          selectedLine = karaokeLines[karaokeLines.length - 1];
+        } else if (textLines.length > 0) {
+          // No karaoke tags, use all lines
+          selectedLine = textLines.join(' ');
+        }
+
+        // Clean the text
+        const cleanedText = selectedLine
+          .replace(/<\d{2}:\d{2}:\d{2}\.\d{3}>/g, '') // Remove inline timestamps
+          .replace(/<[^>]*>/g, '') // Remove HTML tags
+          .replace(/align:\w+\s*/g, '') // Remove alignment
+          .replace(/position:\d+%\s*/g, '') // Remove position
+          .replace(/\s+/g, ' ') // Normalize spaces
+          .trim();
+
+        if (cleanedText) {
+          rawSubtitles.push({
+            text: cleanedText,
+            start,
+            duration: end - start,
+          });
+        }
+      } else {
+        i++;
       }
     }
+
+    console.log(`Parsed ${rawSubtitles.length} raw subtitles`);
+
+    // Step 1: Remove exact duplicates (same text appearing consecutively)
+    const deduplicated = [];
+    for (let j = 0; j < rawSubtitles.length; j++) {
+      const current = rawSubtitles[j];
+
+      // Skip if this is exact duplicate of previous
+      if (deduplicated.length > 0 && deduplicated[deduplicated.length - 1].text === current.text) {
+        // Extend the duration of previous instead
+        const prev = deduplicated[deduplicated.length - 1];
+        const newEnd = current.start + current.duration;
+        prev.duration = newEnd - prev.start;
+      } else {
+        deduplicated.push({ ...current });
+      }
+    }
+
+    console.log(`After deduplication: ${deduplicated.length} subtitles`);
+
+    // Step 2: Merge very short segments (< 0.8 seconds) with context
+    const merged = [];
+    for (let j = 0; j < deduplicated.length; j++) {
+      const current = deduplicated[j];
+
+      if (current.duration < 0.8 && merged.length > 0) {
+        // Merge short segment with previous
+        const prev = merged[merged.length - 1];
+        prev.text += ' ' + current.text;
+        const newEnd = current.start + current.duration;
+        prev.duration = newEnd - prev.start;
+      } else {
+        merged.push({ ...current });
+      }
+    }
+
+    console.log(`After merging short segments: ${merged.length} subtitles`);
+
+    // Step 3: Remove subtitles that are substrings of the next one
+    const cleaned = [];
+    for (let j = 0; j < merged.length; j++) {
+      const current = merged[j];
+      const next = merged[j + 1];
+
+      // Skip if next subtitle starts with current (progressive reveal)
+      if (next && next.text.startsWith(current.text + ' ')) {
+        // This is progressive reveal, skip current
+        continue;
+      }
+
+      cleaned.push({ ...current });
+    }
+
+    console.log(`After removing progressive reveals: ${cleaned.length} subtitles`);
+
+    // Add indices
+    const subtitles = cleaned.map((sub, index) => ({
+      ...sub,
+      index,
+    }));
+
+    console.log(`Final subtitle count: ${subtitles.length}`);
 
     // Clean up the subtitle file
     fs.unlinkSync(expectedFile);

@@ -25,11 +25,21 @@ function PracticeContent() {
   const [isPlaying, setIsPlaying] = useState(false);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Calculate current subtitle early (before any conditional returns)
+  const currentSubtitle = subtitles[currentIndex];
+
   useEffect(() => {
     if (videoId) {
       fetchSubtitles(videoId);
     }
   }, [videoId]);
+
+  // Debug log
+  useEffect(() => {
+    if (currentSubtitle) {
+      console.log(`[RENDER] currentIndex: ${currentIndex}, currentSubtitle: "${currentSubtitle?.text}"`);
+    }
+  }, [currentIndex, currentSubtitle]);
 
   // Infinite loop playback effect
   useEffect(() => {
@@ -176,7 +186,10 @@ function PracticeContent() {
   const handleNext = () => {
     if (currentIndex < subtitles.length - 1) {
       stopPlaying();
-      setCurrentIndex(currentIndex + 1);
+      const nextIndex = currentIndex + 1;
+      console.log(`[DEBUG] Moving to next: ${currentIndex} -> ${nextIndex}`);
+      console.log(`[DEBUG] Next subtitle: "${subtitles[nextIndex]?.text}"`);
+      setCurrentIndex(nextIndex);
       setUserInput("");
       setIsRevealed(false);
       setAccuracy(null);
@@ -186,7 +199,10 @@ function PracticeContent() {
   const handlePrevious = () => {
     if (currentIndex > 0) {
       stopPlaying();
-      setCurrentIndex(currentIndex - 1);
+      const prevIndex = currentIndex - 1;
+      console.log(`[DEBUG] Moving to previous: ${currentIndex} -> ${prevIndex}`);
+      console.log(`[DEBUG] Previous subtitle: "${subtitles[prevIndex]?.text}"`);
+      setCurrentIndex(prevIndex);
       setUserInput("");
       setIsRevealed(false);
       setAccuracy(null);
@@ -221,8 +237,6 @@ function PracticeContent() {
       </div>
     );
   }
-
-  const currentSubtitle = subtitles[currentIndex];
 
   return (
     <main className="min-h-screen bg-gray-50 p-4 md:p-8">
@@ -263,12 +277,12 @@ function PracticeContent() {
 
           {/* Progress Bar */}
           <div className="mb-4 md:mb-6">
-            <div className="text-xs md:text-sm text-gray-600 mb-2">
-              Subtitle {currentIndex + 1} of {subtitles.length}
+            <div className="text-sm md:text-base text-gray-900 font-semibold mb-2">
+              자막 {currentIndex + 1} / {subtitles.length}
             </div>
-            <div className="w-full bg-gray-200 rounded-full h-2">
+            <div className="w-full bg-gray-200 rounded-full h-3">
               <div
-                className="bg-blue-600 h-2 rounded-full transition-all"
+                className="bg-blue-600 h-3 rounded-full transition-all"
                 style={{
                   width: `${((currentIndex + 1) / subtitles.length) * 100}%`,
                 }}
@@ -278,14 +292,14 @@ function PracticeContent() {
 
           {/* Input Area */}
           <div className="mb-4 md:mb-6">
-            <label className="block text-base md:text-lg font-semibold mb-2">
+            <label className="block text-lg md:text-xl font-bold mb-3 text-gray-900">
               듣고 입력하세요:
             </label>
             <textarea
               value={userInput}
               onChange={(e) => setUserInput(e.target.value)}
-              placeholder="Start typing..."
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none resize-none text-sm md:text-base"
+              placeholder="여기에 입력..."
+              className="w-full px-4 py-3 border-2 border-gray-400 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none resize-none text-base md:text-lg text-gray-900 placeholder-gray-500"
               rows={4}
               disabled={isRevealed}
             />
@@ -293,11 +307,15 @@ function PracticeContent() {
 
           {/* Answer Display */}
           {isRevealed && (
-            <div className="mb-4 md:mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
-              <div className="font-semibold mb-2 text-sm md:text-base">정답:</div>
-              <div className="text-base md:text-lg mb-2">{currentSubtitle.text}</div>
+            <div className="mb-4 md:mb-6 p-4 bg-blue-50 border-2 border-blue-300 rounded-lg">
+              <div className="text-xs text-gray-700 font-mono mb-2 bg-gray-100 p-2 rounded">
+                [디버그] 인덱스: {currentIndex} / 총: {subtitles.length}<br/>
+                [디버그] 현재 자막: {currentSubtitle?.text?.substring(0, 30)}...
+              </div>
+              <div className="font-bold mb-2 text-base md:text-lg text-gray-900">정답:</div>
+              <div className="text-lg md:text-xl mb-3 font-semibold text-gray-900">{currentSubtitle?.text || "자막 없음"}</div>
               {accuracy !== null && (
-                <div className="text-lg md:text-xl font-bold text-blue-600">
+                <div className="text-xl md:text-2xl font-bold text-blue-700">
                   정확도: {accuracy}%
                 </div>
               )}
