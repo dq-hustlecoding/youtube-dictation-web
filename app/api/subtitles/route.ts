@@ -27,7 +27,7 @@ export async function GET(request: NextRequest) {
 
     // Use yt-dlp to download subtitles with user-agent and other flags to avoid bot detection
     const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
-    const command = `yt-dlp --skip-download --write-auto-sub --sub-lang en --sub-format vtt --user-agent "${userAgent}" --extractor-args "youtube:player_client=web" --no-check-certificate --output "${outputTemplate}" "https://www.youtube.com/watch?v=${videoId}"`;
+    const command = `yt-dlp --skip-download --write-auto-sub --sub-lang en --sub-format vtt --user-agent "${userAgent}" --extractor-args "youtube:player_client=web;player_skip=configs,js" --no-check-certificate --sleep-requests 1 --referer "https://www.youtube.com/" --output "${outputTemplate}" "https://www.youtube.com/watch?v=${videoId}"`;
 
     console.log("Running yt-dlp...");
     const { stdout, stderr } = await execAsync(command, {
