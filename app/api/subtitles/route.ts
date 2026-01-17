@@ -1,10 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { exec } from "child_process";
-import { promisify } from "util";
-import * as fs from "fs";
-import * as path from "path";
-
-const execAsync = promisify(exec);
+import { YoutubeTranscript } from "youtube-transcript";
 
 export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams;
@@ -20,112 +15,21 @@ export async function GET(request: NextRequest) {
   try {
     console.log(`Fetching transcript for video: ${videoId}`);
 
-    // Create a unique temp filename
-    const tempId = Date.now();
-    const tempDir = '/tmp';
-    const outputTemplate = path.join(tempDir, `subtitle_${tempId}.%(ext)s`);
+    // Fetch transcript using youtube-transcript
+    const transcriptItems = await YoutubeTranscript.fetchTranscript(videoId);
 
-    // Use yt-dlp to download subtitles with user-agent and other flags to avoid bot detection
-    const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
-    const command = `yt-dlp --skip-download --write-auto-sub --sub-lang en --sub-format vtt --user-agent "${userAgent}" --extractor-args "youtube:player_client=web;player_skip=configs,js" --no-check-certificate --sleep-requests 1 --referer "https://www.youtube.com/" --output "${outputTemplate}" "https://www.youtube.com/watch?v=${videoId}"`;
-
-    console.log("Running yt-dlp...");
-    const { stdout, stderr } = await execAsync(command, {
-      timeout: 30000,
-      maxBuffer: 10 * 1024 * 1024
-    });
-
-    console.log("yt-dlp completed");
-
-    // Find the generated subtitle file
-    const expectedFile = path.join(tempDir, `subtitle_${tempId}.en.vtt`);
-
-    if (!fs.existsSync(expectedFile)) {
-      console.log("Expected file not found:", expectedFile);
-      throw new Error("No subtitle file generated");
+    if (!transcriptItems || transcriptItems.length === 0) {
+      throw new Error("No transcript found");
     }
 
-    const subContent = fs.readFileSync(expectedFile, 'utf8');
+    console.log(`Fetched ${transcriptItems.length} transcript items`);
 
-    console.log("Subtitle file content length:", subContent.length);
-
-    // Parse VTT format - collect all text lines between timestamps
-    const lines = subContent.split('\n');
-    const rawSubtitles = [];
-    let i = 0;
-
-    while (i < lines.length) {
-      const line = lines[i].trim();
-
-      // Match timestamp line: 00:00:00.000 --> 00:00:03.000
-      const timestampMatch = line.match(/^(\d{2}):(\d{2}):(\d{2})\.(\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2})\.(\d{3})/);
-
-      if (timestampMatch) {
-        const startHours = parseInt(timestampMatch[1]);
-        const startMinutes = parseInt(timestampMatch[2]);
-        const startSeconds = parseInt(timestampMatch[3]);
-        const startMs = parseInt(timestampMatch[4]);
-
-        const endHours = parseInt(timestampMatch[5]);
-        const endMinutes = parseInt(timestampMatch[6]);
-        const endSeconds = parseInt(timestampMatch[7]);
-        const endMs = parseInt(timestampMatch[8]);
-
-        const start = startHours * 3600 + startMinutes * 60 + startSeconds + startMs / 1000;
-        const end = endHours * 3600 + endMinutes * 60 + endSeconds + endMs / 1000;
-
-        // Collect text lines until we hit an empty line or next timestamp
-        const textLines = [];
-        i++;
-
-        while (i < lines.length) {
-          const textLine = lines[i].trim();
-
-          // Stop if empty line or next timestamp
-          if (!textLine || /^\d{2}:\d{2}:\d{2}\.\d{3}\s*-->/.test(textLine)) {
-            break;
-          }
-
-          // Skip cue identifiers (numbers or UUIDs)
-          if (!textLine.match(/^\d+$/) && !textLine.match(/^[a-f0-9-]{36}$/i)) {
-            textLines.push(textLine);
-          }
-
-          i++;
-        }
-
-        // For karaoke-style subtitles, prefer lines with timing tags
-        let selectedLine = '';
-        const karaokeLines = textLines.filter(line => line.includes('<') && /\d{2}:\d{2}:\d{2}\.\d{3}/.test(line));
-
-        if (karaokeLines.length > 0) {
-          // Use the last karaoke line (most complete)
-          selectedLine = karaokeLines[karaokeLines.length - 1];
-        } else if (textLines.length > 0) {
-          // No karaoke tags, use all lines
-          selectedLine = textLines.join(' ');
-        }
-
-        // Clean the text
-        const cleanedText = selectedLine
-          .replace(/<\d{2}:\d{2}:\d{2}\.\d{3}>/g, '') // Remove inline timestamps
-          .replace(/<[^>]*>/g, '') // Remove HTML tags
-          .replace(/align:\w+\s*/g, '') // Remove alignment
-          .replace(/position:\d+%\s*/g, '') // Remove position
-          .replace(/\s+/g, ' ') // Normalize spaces
-          .trim();
-
-        if (cleanedText) {
-          rawSubtitles.push({
-            text: cleanedText,
-            start,
-            duration: end - start,
-          });
-        }
-      } else {
-        i++;
-      }
-    }
+    // Convert to our format
+    const rawSubtitles = transcriptItems.map((item: any) => ({
+      text: item.text,
+      start: item.offset / 1000, // Convert ms to seconds
+      duration: item.duration / 1000, // Convert ms to seconds
+    }));
 
     console.log(`Parsed ${rawSubtitles.length} raw subtitles`);
 
@@ -190,11 +94,8 @@ export async function GET(request: NextRequest) {
 
     console.log(`Final subtitle count: ${subtitles.length}`);
 
-    // Clean up the subtitle file
-    fs.unlinkSync(expectedFile);
-
     if (subtitles.length === 0) {
-      throw new Error("No subtitles found in VTT file");
+      throw new Error("No subtitles found");
     }
 
     console.log(`Subtitles processed: ${subtitles.length} items`);
